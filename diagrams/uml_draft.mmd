@@ -29,18 +29,23 @@ classDiagram
         +add_task(task Task) void
         +remove_task(task Task) void
         +pending_tasks() List~Task~
+        +mark_task_complete(task Task) Task
     }
 
     class Task {
         +str title
         +int duration_minutes
         +Priority priority
-        +bool recurring
+        +str time
+        +str frequency
+        +date due_date
         +bool done
         +str notes
         +fits_in(minutes int) bool
         +mark_complete() void
         +mark_incomplete() void
+        +is_recurring() bool
+        +next_occurrence(from_date date) Task
     }
 
     class ScheduledTask {
@@ -54,15 +59,21 @@ classDiagram
         +Owner owner
         +time day_start
         +sort_by_priority() List~Task~
+        +sort_by_time() List~Task~
+        +filter_tasks(done bool, pet_name str) List~Task~
+        +detect_conflicts() List~str~
         +filter_by_time(tasks List~Task~) List~Task~
         +resolve_conflicts(scheduled List~ScheduledTask~) List~ScheduledTask~
         +build_plan() List~ScheduledTask~
         +explain_plan() str
     }
 
-    Owner "1" --> "*" Pet : owns
-    Pet "1" --> "*" Task : has
+    Owner "1" *-- "*" Pet : owns
+    Pet "1" *-- "*" Task : has
     Task --> Priority : rated by
-    ScheduledTask --> Task : wraps
+    Task ..> Task : spawns next
+    Pet ..> Task : auto-repeats
+    ScheduledTask "1" --> "1" Task : wraps
     Scheduler --> Owner : plans for
+    Scheduler ..> Task : orders & filters
     Scheduler ..> ScheduledTask : produces

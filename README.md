@@ -22,6 +22,13 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## 📐 System Design (UML)
+
+The class diagram below reflects the final implementation in `pawpal_system.py` —
+its classes, attributes, methods, and how they interact. Source: [`diagrams/uml_draft.mmd`](diagrams/uml_draft.mmd).
+
+![PawPal+ UML class diagram](diagrams/uml_draft.png)
+
 ## Getting started
 
 ### Setup
