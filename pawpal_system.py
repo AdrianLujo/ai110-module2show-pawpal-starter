@@ -11,9 +11,17 @@ Design decisions:
 - The Scheduler plans across ALL of an owner's pets.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from enum import IntEnum
+
+
+# How far ahead the next occurrence of a recurring task falls. Anything not in
+# this table is treated as a one-off task that does not repeat.
+_FREQUENCY_DELTAS: dict[str, timedelta] = {
+    "daily": timedelta(days=1),
+    "weekly": timedelta(weeks=1),
+}
 
 
 class Priority(IntEnum):
@@ -28,12 +36,29 @@ def _add_minutes(start: time, minutes: int) -> time:
     return (datetime.combine(date.min, start) + timedelta(minutes=minutes)).time()
 
 
+def _parse_time(value: str, fallback: time) -> time:
+    """Parse an "HH:MM" string into a time; use `fallback` when unset/invalid.
+
+    Never raises — a blank or malformed value falls back rather than crashing
+    the whole plan over one bad task.
+    """
+    if not value:
+        return fallback
+    try:
+        return datetime.strptime(value, "%H:%M").time()
+    except ValueError:
+        return fallback
+
+
 @dataclass
 class Task:
+    """A single thing to do for a pet, with duration, priority, and timing."""
     title: str
     duration_minutes: int
     priority: Priority
-    recurring: bool = False
+    time: str = ""  # preferred start time in "HH:MM" (24-hour) format
+    frequency: str = ""  # "daily", "weekly", or "" for a one-off task
+    due_date: date | None = None
     done: bool = False
     notes: str = ""
 
@@ -48,6 +73,28 @@ class Task:
     def mark_incomplete(self) -> None:
         """Mark this task not complete."""
         self.done = False
+
+    def is_recurring(self) -> bool:
+        """Return True if this task repeats on a known frequency."""
+        return self.frequency in _FREQUENCY_DELTAS
+
+    def next_occurrence(self, from_date: date | None = None) -> "Task":
+        """Return a fresh, not-done copy of this task for its next occurrence.
+
+        The new due date is `from_date` (default: today) plus one interval —
+        one day for "daily", one week for "weekly". timedelta handles the
+        arithmetic correctly across month and year boundaries, so we never do
+        manual day/month rollover math ourselves.
+        """
+        if not self.is_recurring():
+            raise ValueError(
+                f"{self.title!r} has no recurring frequency to advance"
+            )
+        base = from_date or date.today()
+        next_due = base + _FREQUENCY_DELTAS[self.frequency]
+        # replace() copies every other field (title, duration, priority, ...)
+        # so only the due date and completion status change.
+        return replace(self, due_date=next_due, done=False)
 
 
 @dataclass
@@ -64,6 +111,7 @@ class ScheduledTask:
 
 @dataclass
 class Pet:
+    """A pet owned by an Owner; holds its own list of tasks."""
     name: str
     species: str
     breed: str = ""
@@ -83,9 +131,26 @@ class Pet:
         """Return this pet's not-yet-completed tasks."""
         return [t for t in self.tasks if not t.done]
 
+    def mark_task_complete(self, task: Task) -> Task | None:
+        """Mark one of this pet's tasks complete, auto-repeating if recurring.
+
+        When a "daily" or "weekly" task is completed, its next occurrence is
+        created and attached to this pet automatically. Returns that new
+        follow-up task, or None for a one-off task. This logic lives on Pet
+        (not Task) because only the pet owns the task list the new instance
+        must be added to.
+        """
+        task.mark_complete()
+        if not task.is_recurring():
+            return None
+        follow_up = task.next_occurrence()
+        self.add_task(follow_up)
+        return follow_up
+
 
 @dataclass
 class Owner:
+    """A pet owner with a daily time budget, preferences, and pets."""
     name: str
     minutes_available: int = 0
     preferences: list[str] = field(default_factory=list)
@@ -109,8 +174,14 @@ class Owner:
 
 
 class Scheduler:
+    """Builds an owner's daily plan across all their pets' tasks."""
+
     def __init__(self, owner: Owner, day_start: time = time(8, 0)):
-        """Plan for the given owner's pets, laying tasks out from day_start."""
+        """Plan for the given owner's pets.
+
+        Each task is placed at its own `time`; day_start is only the fallback
+        start for tasks that have no time set.
+        """
         self.owner = owner
         self.day_start = day_start
 
@@ -118,6 +189,61 @@ class Scheduler:
         """Return the owner's pending tasks, highest priority first."""
         pending = [t for t in self.owner.all_tasks() if not t.done]
         return sorted(pending, key=lambda t: t.priority, reverse=True)
+
+    def sort_by_time(self) -> list[Task]:
+        """Return the owner's tasks sorted by start time, earliest first.
+
+        Each task's `time` is an "HH:MM" (24-hour) string. Because that format
+        is zero-padded and fixed-width, sorting the strings lexicographically
+        matches chronological order, so the lambda key can hand `sorted()` the
+        raw string with no parsing needed. Tasks with no time ("") sort first.
+        """
+        return sorted(self.owner.all_tasks(), key=lambda t: t.time)
+
+    def filter_tasks(
+        self, done: bool | None = None, pet_name: str | None = None
+    ) -> list[Task]:
+        """Filter the owner's tasks by completion status and/or pet name.
+
+        - done=True keeps only completed tasks; done=False keeps only pending
+          ones; done=None ignores completion status.
+        - pet_name keeps only tasks belonging to the pet with that name;
+          pet_name=None ignores which pet a task belongs to.
+        """
+        results: list[Task] = []
+        for pet in self.owner.pets:
+            if pet_name is not None and pet.name != pet_name:
+                continue
+            for task in pet.tasks:
+                if done is not None and task.done != done:
+                    continue
+                results.append(task)
+        return results
+
+    def detect_conflicts(self) -> list[str]:
+        """Return warning messages for tasks that share the same start time.
+
+        Lightweight by design: it only groups pending tasks by their "HH:MM"
+        `time` string — no slot math, no mutation of the plan. Tasks with no
+        time set ("") or already done are skipped, and clashes across
+        different pets are caught just like clashes within one pet. Returns an
+        empty list when nothing collides, so callers can print the result
+        without any risk of crashing.
+        """
+        by_time: dict[str, list[tuple[str, Task]]] = {}
+        for pet in self.owner.pets:
+            for task in pet.tasks:
+                if task.done or not task.time:
+                    continue
+                by_time.setdefault(task.time, []).append((pet.name, task))
+
+        warnings: list[str] = []
+        for slot in sorted(by_time):
+            entries = by_time[slot]
+            if len(entries) > 1:
+                labels = ", ".join(f"{task.title} ({pet})" for pet, task in entries)
+                warnings.append(f"WARNING: {len(entries)} tasks scheduled at {slot} — {labels}")
+        return warnings
 
     def filter_by_time(self, tasks: list[Task]) -> list[Task]:
         """Keep tasks that fit within the owner's available minutes.
@@ -134,13 +260,17 @@ class Scheduler:
         return kept
 
     def _assign_slots(self, tasks: list[Task]) -> list[ScheduledTask]:
-        """Lay tasks back-to-back starting at day_start."""
+        """Place each task at its own `time`, falling back to day_start.
+
+        This is what unifies the planner with detect_conflicts(): both now read
+        the same `time` attribute. Tasks whose time is unset land at day_start;
+        resolve_conflicts() then pushes back any that overlap.
+        """
         scheduled: list[ScheduledTask] = []
-        cursor = self.day_start
         for task in tasks:
-            end = _add_minutes(cursor, task.duration_minutes)
-            scheduled.append(ScheduledTask(task, cursor, end))
-            cursor = end
+            start = _parse_time(task.time, self.day_start)
+            end = _add_minutes(start, task.duration_minutes)
+            scheduled.append(ScheduledTask(task, start, end))
         return scheduled
 
     def resolve_conflicts(self, scheduled: list[ScheduledTask]) -> list[ScheduledTask]:
@@ -157,7 +287,12 @@ class Scheduler:
         return result
 
     def build_plan(self) -> list[ScheduledTask]:
-        """Produce the ordered daily plan with concrete time slots."""
+        """Produce the daily plan with concrete time slots.
+
+        Priority decides which tasks make the time budget; each survivor is
+        then placed at its own `time` and overlaps are pushed back, so the
+        final plan is ordered chronologically by start time.
+        """
         ordered = self.sort_by_priority()
         affordable = self.filter_by_time(ordered)
         scheduled = self._assign_slots(affordable)

@@ -39,12 +39,22 @@ We also removed the scheduler's own task list so the pet's task list is the sing
 **a. Constraints and priorities**
 
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
+
+Priority, time budget, and each task's set time. It sorts by priority (HIGH to LOW). Then filter_by_time() keeps tasks until the owner's available minutes run out, so low priority tasks get dropped if there isn't room. After that it places tasks at their "HH:MM" and pushes back overlaps. Done tasks are skipped.
+
 - How did you decide which constraints mattered most?
+
+Priority came first since the important tasks like feeding should always happen. Time is the what decides what fits in the schedule. The set time lays out the day in order.
 
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+
+Our conflict warning only checks for exact time matches. detect_conflicts() groups tasks by their "HH:MM" string, so it only warns when two tasks start at the exact same time. It doesn't look at durations, so a 30 min task at 12:00 and a task at 12:15 overlap but won't get flagged. We did it this way to keep it simple and so it can't crash on a bad time value.
+
 - Why is that tradeoff reasonable for this scenario?
+
+For a pet care planner people mostly enter tasks at round times like 6:45 or 7:00, so same time clashes matter. The plan still handles overlaps: resolve_conflicts() uses each task's duration to push slots back so there is no double booking. The warning stays simple while the schedule comes out with no overlaps.
 
 ---
 
