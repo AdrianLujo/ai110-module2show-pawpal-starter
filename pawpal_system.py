@@ -110,6 +110,7 @@ class Owner:
 
 class Scheduler:
     def __init__(self, owner: Owner, day_start: time = time(8, 0)):
+        """Plan for the given owner's pets, laying tasks out from day_start."""
         self.owner = owner
         self.day_start = day_start
 
