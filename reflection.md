@@ -50,7 +50,7 @@ Priority came first since the important tasks like feeding should always happen.
 
 - Describe one tradeoff your scheduler makes.
 
-Our conflict warning only checks for exact time matches. detect_conflicts() groups tasks by their "HH:MM" string, so it only warns when two tasks start at the exact same time. It doesn't look at durations, so a 30 min task at 12:00 and a task at 12:15 overlap but won't get flagged. We did it this way to keep it simple and so it can't crash on a bad time value.
+The conflict warning only checks for exact time matches. detect_conflicts() groups tasks by the "HH:MM" string, so it only warns when two tasks start at the exact same time. It doesn't look at durations, so a 30 min task at 12:00 and a task at 12:15 overlap but won't get flagged. This was done in this way to keep it simple and so the program doesn't crash on a bad time value.
 
 - Why is that tradeoff reasonable for this scenario?
 
@@ -63,12 +63,30 @@ For a pet care planner people mostly enter tasks at round times like 6:45 or 7:0
 **a. How you used AI**
 
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
+
+I used Claude Code for brainstorming the UML, turning it into class stubs, filling in the scheduling logic, writing tests, and the README. It was most useful for refactors.
+
+- Which AI coding assistant features were most effective for building your scheduler?
+
+TThe most effective feature is that Claude can read the whole repo. Since Claude had all our files in context, Claude's code recommendations actually fit our design. It knew that the pet owns the tasks. Claude could also run the tests, main.py, and read the output, so we could verify changes as we went along. 
+
 - What kinds of prompts or questions were most helpful?
+
+Asking about specific situationsnlike "what happens if two tasks start at the same time on different pets?" generated code that could be tested. Asking it to explain why before writing it also helped, because I could decide if the idea matched the intended design.
+
+- How did using separate chat sessions for different phases help you stay organized?
+
+One session per phase: design, wiring the UI, the scheduling logic, then tests and docs. That matches how our commits are grouped. Keeping them apart meant each one stayed on topic. The design session didn't get mixed up with Streamlit details, and the testing session wasn't reopening design arguments we already settled. It was also easier to go back and find why we did something, and one giant thread didn't fill up with old context that confused later answers.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
+- Describe one moment where you did not accept an AI suggestion as-is. / Give one example of an AI suggestion you rejected or modified to keep your system design clean.
+
+For conflict handling the suggestion was one method that both detected and fixed overlaps using durations. We split it into two instead. detect_conflicts() just warns when two tasks share the exact same start time, and it can't crash on a bad time string. resolve_conflicts() does the actual duration based push-back in build_plan(). One method that both warned the user and changed the plan was harder to test. I also didn't keep a task list on the Scheduler like it first set up, Claude suggested making the pet's task list the only source of truth so two lists couldn't get out of sync.
+
 - How did you evaluate or verify what the AI suggested?
+
+Suggestions got a test in pytest, and for the tricky ones we wrote the test first and checked the code against it. 
 
 ---
 
@@ -77,12 +95,22 @@ For a pet care planner people mostly enter tasks at round times like 6:45 or 7:0
 **a. What you tested**
 
 - What behaviors did you test?
+
+We have 28 tests in tests/test_pawpal.py. They cover the time budget, priority ordering, sorting by time, recurrence, conflict detection, and overlap resolution. There are also tests for empty owners and pets, the midnight bug, and a task due tomorrow staying out of today's plan.
+
 - Why were these tests important?
+
+A lot of them are for bugs we that were found. Tests also let us change code without worrying, since anything we broke would show up right away.
 
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
+
+Pretty confident, about a 4 out of 5. All the tests pass and they cover the main behaviors plus the edge cases we found. It's not a 5 because the tests are only on the classes. We didn't test the Streamlit UI.
+
 - What edge cases would you test next if you had more time?
+
+Aa task that exactly fills the budget or a lot of tasks at once.
 
 ---
 
@@ -92,10 +120,16 @@ For a pet care planner people mostly enter tasks at round times like 6:45 or 7:0
 
 - What part of this project are you most satisfied with?
 
+Keeping the design simple. The pet's task list is the only source of truth, each class does one thing, and the conflict warning is separate from actually fixing overlaps.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+I'd handle tasks that cross midnight properly, and add UI tests.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+Getting the design right first made coding easier. Once we had one source of truth and clear jobs for each class, the AI's code fit right in and the tests were simple to write.

@@ -22,6 +22,32 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## ✨ Features
+
+- **Sorting by priority** — orders pending tasks HIGH → MEDIUM → LOW using a
+  `Priority` IntEnum (no lookup table). `Scheduler.sort_by_priority()`
+- **Sorting by time** — orders tasks chronologically by their `"HH:MM"` start
+  time, parsing each to a real `time` so `"9:00"` sorts before `"10:00"` and
+  untimed tasks come first. `Scheduler.sort_by_time()`
+- **Filtering** — narrows tasks by completion status and/or pet name.
+  `Scheduler.filter_tasks(done=…, pet_name=…)`
+- **Time-budget fitting** — greedily keeps tasks while the owner's
+  `minutes_available` lasts and drops the rest (sort by priority first to
+  protect important tasks). `Scheduler.filter_by_time()`
+- **Conflict warnings** — flags two or more tasks sharing the same start time,
+  normalizing `"9:00"`/`"09:00"` to one slot and catching clashes across
+  different pets — warns rather than crashing. `Scheduler.detect_conflicts()`
+- **Overlap resolution** — assigns each task a concrete start/end slot and
+  pushes back any that would double-book, so the built plan never overlaps.
+  `Scheduler._assign_slots()` + `Scheduler.resolve_conflicts()`
+- **Daily / weekly recurrence** — completing a recurring task auto-creates its
+  next occurrence, dated with `timedelta` (+1 day for daily, +7 for weekly);
+  future-dated follow-ups are held out of today's plan.
+  `Pet.mark_task_complete()` + `Task.next_occurrence()`
+- **Daily plan with explanation** — combines priority ordering, budget fitting,
+  and overlap resolution into a timed schedule, plus a human-readable rationale.
+  `Scheduler.build_plan()` + `Scheduler.explain_plan()`
+
 ## 📐 System Design (UML)
 
 The class diagram below reflects the final implementation in `pawpal_system.py` —
@@ -133,12 +159,96 @@ PawPal+ goes beyond a flat to-do list. All logic lives in `pawpal_system.py`.
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+Launch the interactive app with `streamlit run app.py`. It opens seeded with
+owner **Jordan** and one dog, **Mochi** — enough to explore without any setup.
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+### What you can do in the UI
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+- **Owner** — edit the owner's name and set **minutes available today** (the
+  daily time budget the scheduler plans against).
+- **Add a Pet** — name a new pet and pick its species (dog / cat / other); it's
+  auto-selected as the active pet once added.
+- **Active pet** — switch which pet you're adding tasks to.
+- **Tasks** — add a task with a title, duration (minutes), priority
+  (low / medium / high), and an optional `HH:MM` start time. Added tasks persist
+  across reruns and show in a per-pet table.
+- **All Tasks (across pets)** — sort every task by **priority** or **time**, and
+  filter by status (**all / pending / completed**).
+- **Conflict Check** — a live banner listing any tasks that share a start time,
+  or a green all-clear when none collide.
+- **Build Schedule** — generate today's timed plan and expand **"Why this
+  plan?"** to see the reasoning.
+
+### Example workflow
+
+1. Set **minutes available today** to `90`.
+2. Under **Add a Pet**, add a cat named **Biscuit**.
+3. With Mochi active, add **Morning walk** — 30 min, high, `07:00`.
+4. Switch the active pet to Biscuit and add **Playtime** — 20 min, medium,
+   `12:15` — then add **Vet call** for Mochi at the same `12:15`.
+5. Open **Conflict Check**: it warns that Vet call (Mochi) and Playtime
+   (Biscuit) clash at 12:15 — a conflict caught *across two different pets*.
+6. In **All Tasks**, sort by **time** to see tasks reordered chronologically
+   (07:00 → 12:15 → …), then filter to **pending** to hide completed ones.
+7. Click **Generate schedule**: high-priority tasks are placed first, the 12:15
+   overlap is pushed back so nothing double-books, and the plan is explained.
+
+### Key Scheduler behaviors on display
+
+- **Sorting** — chronological (`sort_by_time()`) and by importance
+  (`sort_by_priority()`), even for non-zero-padded times like `"9:00"`.
+- **Filtering** — by completion status and by pet, plus greedy time-budget
+  fitting that drops tasks once the 90-minute budget runs out.
+- **Conflict warnings** — same-start-time clashes flagged across pets, warning
+  rather than crashing.
+- **Overlap resolution** — the built plan pushes back duration overlaps so no
+  two slots collide.
+- **Recurrence** — completing the `daily` Feeding task auto-spawns its next
+  occurrence, dated one day out.
+
+### Sample CLI output
+
+The same logic runs headless via `python main.py`, which builds a sample owner,
+pets, and tasks — including a deliberate cross-pet clash at 12:15 and a
+recurring daily task — then prints each behavior:
+
+```
+Recurring task
+========================================
+  Completed: Feeding (daily)
+  Auto-created next: Feeding due 2026-07-08
+
+Schedule conflicts
+========================================
+  WARNING: 2 tasks scheduled at 12:15 — Vet call (Mochi), Playtime (Biscuit)
+
+Today's Schedule
+========================================
+Daily plan for Jordan (90 min available):
+  07:00 — Morning walk (30 min) [priority: high]
+  12:15 — Vet call (15 min) [priority: high]
+  12:30 — Playtime (20 min) [priority: medium]
+
+All tasks sorted by time
+========================================
+  06:45 — Feeding (done)
+  06:45 — Feeding (pending)
+  07:00 — Morning walk (pending)
+  12:15 — Vet call (pending)
+  12:15 — Playtime (pending)
+  16:30 — Grooming (pending)
+
+Pending tasks only
+========================================
+  16:30 — Grooming
+  07:00 — Morning walk
+  12:15 — Vet call
+  12:15 — Playtime
+  06:45 — Feeding
+
+Tasks for Mochi only
+========================================
+  16:30 — Grooming
+  07:00 — Morning walk
+  12:15 — Vet call
+```

@@ -96,16 +96,23 @@ pet = owner.pets[pet_index]
 st.markdown(f"### Tasks for {pet.name}")
 st.caption("Add tasks below. They persist across reruns because the Owner lives in session_state.")
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     task_title = st.text_input("Task title", value="Morning walk")
 with col2:
     duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
 with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+with col4:
+    task_time = st.text_input(
+        "Time (HH:MM)", value="08:00",
+        help="Preferred start time, 24-hour. Leave blank for no fixed time.",
+    )
 
 if st.button("Add task"):
-    pet.add_task(Task(task_title, int(duration), PRIORITY_MAP[priority]))
+    pet.add_task(
+        Task(task_title, int(duration), PRIORITY_MAP[priority], time=task_time.strip())
+    )
 
 if pet.tasks:
     st.write("Current tasks:")
@@ -113,6 +120,7 @@ if pet.tasks:
         [
             {
                 "title": t.title,
+                "time": t.time or "—",
                 "duration_minutes": t.duration_minutes,
                 "priority": t.priority.name.lower(),
                 "done": t.done,
@@ -125,13 +133,95 @@ else:
 
 st.divider()
 
+# One Scheduler drives every view below: the sorted/filtered table, the
+# conflict check, and the generated plan all read through the same object.
+scheduler = Scheduler(owner)
+
+st.subheader("All Tasks (across pets)")
+st.caption("Sort and filter every task the owner has, using the Scheduler.")
+
+sort_col, filter_col = st.columns(2)
+with sort_col:
+    sort_by = st.radio("Sort by", ["priority", "time"], horizontal=True)
+with filter_col:
+    status = st.radio("Show", ["all", "pending", "completed"], horizontal=True)
+
+# Choose the ordering from the Scheduler, then narrow to the requested status.
+if sort_by == "priority":
+    ordered = scheduler.sort_by_priority()
+else:
+    ordered = scheduler.sort_by_time()
+done_flag = {"all": None, "pending": False, "completed": True}[status]
+visible = scheduler.filter_tasks(done=done_flag)
+# Keep the sorted order, but only rows that survive the status filter.
+rows = [t for t in ordered if t in visible]
+
+# Map each task back to the pet it belongs to, for a clearer table.
+pet_of = {id(t): p.name for p in owner.pets for t in p.tasks}
+
+if rows:
+    st.table(
+        [
+            {
+                "pet": pet_of.get(id(t), "—"),
+                "title": t.title,
+                "time": t.time or "—",
+                "duration_minutes": t.duration_minutes,
+                "priority": t.priority.name.lower(),
+                "done": t.done,
+            }
+            for t in rows
+        ]
+    )
+else:
+    st.info("No tasks match this filter.")
+
+st.divider()
+
+st.subheader("Conflict Check")
+st.caption("Flags tasks that are scheduled at the same start time.")
+
+conflicts = scheduler.detect_conflicts()
+if conflicts:
+    st.warning(
+        f"⚠️ {len(conflicts)} scheduling conflict(s) found — "
+        "you can't be in two places at once:"
+    )
+    for warning in conflicts:
+        # Strip the "WARNING: " prefix; the icon already signals severity.
+        message = warning.removeprefix("WARNING: ")
+        st.warning(message, icon="🕑")
+    st.info(
+        "Tip: give one of the clashing tasks a different start time "
+        "to resolve the overlap."
+    )
+else:
+    st.success(
+        "✅ No scheduling conflicts — every task starts at a distinct time."
+    )
+
+st.divider()
+
 st.subheader("Build Schedule")
 st.caption("Runs the Scheduler over the owner's pets and shows today's plan.")
 
 if st.button("Generate schedule"):
-    scheduler = Scheduler(owner)
     plan = scheduler.build_plan()
     if not plan:
         st.warning("No plan: add tasks and make sure minutes available is more than 0.")
     else:
-        st.text(scheduler.explain_plan())
+        st.success(f"Planned {len(plan)} task(s) for {owner.name} today.")
+        st.table(
+            [
+                {
+                    "start": item.start.strftime("%H:%M"),
+                    "end": item.end.strftime("%H:%M"),
+                    "task": item.task.title,
+                    "duration_minutes": item.task.duration_minutes,
+                    "priority": item.task.priority.name.lower(),
+                }
+                for item in plan
+            ]
+        )
+        with st.expander("Why this plan?"):
+            st.text(scheduler.explain_plan())
