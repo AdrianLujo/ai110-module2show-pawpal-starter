@@ -1,5 +1,7 @@
 import streamlit as st
 
+from pawpal_system import Owner, Pet, Task, Scheduler, Priority
+
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
@@ -38,16 +40,61 @@ At minimum, your system should:
 
 st.divider()
 
-st.subheader("Quick Demo Inputs (UI only)")
-owner_name = st.text_input("Owner name", value="Jordan")
-pet_name = st.text_input("Pet name", value="Mochi")
-species = st.selectbox("Species", ["dog", "cat", "other"])
+PRIORITY_MAP = {"low": Priority.LOW, "medium": Priority.MEDIUM, "high": Priority.HIGH}
 
-st.markdown("### Tasks")
-st.caption("Add a few tasks. In your final version, these should feed into your scheduler.")
+# Create the Owner (and its Pet) once, then reuse it across reruns.
+# Without this check, every widget interaction would rebuild the Owner and
+# wipe out the tasks the user already added.
+if "owner" not in st.session_state:
+    owner = Owner(name="Jordan")
+    owner.add_pet(Pet(name="Mochi", species="dog"))
+    st.session_state.owner = owner
 
-if "tasks" not in st.session_state:
-    st.session_state.tasks = []
+owner = st.session_state.owner
+
+st.subheader("Owner")
+owner.name = st.text_input("Owner name", value=owner.name)
+owner.minutes_available = st.number_input(
+    "Minutes available today", min_value=0, max_value=1440, value=owner.minutes_available or 90
+)
+
+def add_pet_from_form():
+    """Callback: register the new pet, then select it and clear the form.
+
+    Runs before the rerun's main body, so state is settled by the time the
+    widgets below are drawn.
+    """
+    name = st.session_state.new_pet_name.strip()
+    if not name:
+        st.session_state.pet_warning = "Give the pet a name before adding it."
+        return
+    owner.add_pet(Pet(name=name, species=st.session_state.new_pet_species))
+    st.session_state.active_pet_index = len(owner.pets) - 1  # auto-select it
+    st.session_state.new_pet_name = ""  # clear the input
+    st.session_state.pet_warning = ""
+
+st.subheader("Add a Pet")
+new_pet_col1, new_pet_col2 = st.columns(2)
+with new_pet_col1:
+    st.text_input("New pet name", key="new_pet_name")
+with new_pet_col2:
+    st.selectbox("New pet species", ["dog", "cat", "other"], key="new_pet_species")
+
+st.button("Add pet", on_click=add_pet_from_form)
+
+if st.session_state.get("pet_warning"):
+    st.warning(st.session_state.pet_warning)
+
+# Choose which pet to add tasks to (defaults to the most recently added).
+pet_names = [p.name for p in owner.pets]
+pet_index = st.selectbox(
+    "Active pet", range(len(pet_names)), format_func=lambda i: pet_names[i],
+    key="active_pet_index",
+)
+pet = owner.pets[pet_index]
+
+st.markdown(f"### Tasks for {pet.name}")
+st.caption("Add tasks below. They persist across reruns because the Owner lives in session_state.")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -58,31 +105,33 @@ with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 
 if st.button("Add task"):
-    st.session_state.tasks.append(
-        {"title": task_title, "duration_minutes": int(duration), "priority": priority}
-    )
+    pet.add_task(Task(task_title, int(duration), PRIORITY_MAP[priority]))
 
-if st.session_state.tasks:
+if pet.tasks:
     st.write("Current tasks:")
-    st.table(st.session_state.tasks)
+    st.table(
+        [
+            {
+                "title": t.title,
+                "duration_minutes": t.duration_minutes,
+                "priority": t.priority.name.lower(),
+                "done": t.done,
+            }
+            for t in pet.tasks
+        ]
+    )
 else:
     st.info("No tasks yet. Add one above.")
 
 st.divider()
 
 st.subheader("Build Schedule")
-st.caption("This button should call your scheduling logic once you implement it.")
+st.caption("Runs the Scheduler over the owner's pets and shows today's plan.")
 
 if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
-    )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
-    )
+    scheduler = Scheduler(owner)
+    plan = scheduler.build_plan()
+    if not plan:
+        st.warning("No plan: add tasks and make sure minutes available is more than 0.")
+    else:
+        st.text(scheduler.explain_plan())
