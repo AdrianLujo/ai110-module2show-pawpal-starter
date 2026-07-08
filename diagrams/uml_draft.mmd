@@ -2,6 +2,13 @@ classDiagram
     %% PawPal+ system design (draft)
     %% Refine this so it matches your final implementation.
 
+    class Priority {
+        <<enumeration>>
+        LOW
+        MEDIUM
+        HIGH
+    }
+
     class Owner {
         +str name
         +int minutes_available
@@ -10,6 +17,7 @@ classDiagram
         +add_pet(pet Pet) void
         +set_availability(minutes int) void
         +add_preference(pref str) void
+        +all_tasks() List~Task~
     }
 
     class Pet {
@@ -20,31 +28,41 @@ classDiagram
         +List~Task~ tasks
         +add_task(task Task) void
         +remove_task(task Task) void
+        +pending_tasks() List~Task~
     }
 
     class Task {
         +str title
         +int duration_minutes
-        +str priority
+        +Priority priority
         +bool recurring
+        +bool done
         +str notes
-        +priority_score() int
         +fits_in(minutes int) bool
+        +mark_complete() void
+        +mark_incomplete() void
+    }
+
+    class ScheduledTask {
+        +Task task
+        +time start
+        +time end
+        +overlaps(other ScheduledTask) bool
     }
 
     class Scheduler {
         +Owner owner
-        +Pet pet
-        +List~Task~ tasks
+        +time day_start
         +sort_by_priority() List~Task~
-        +filter_by_time(available int) List~Task~
-        +resolve_conflicts(tasks List~Task~) List~Task~
-        +build_plan() List~Task~
+        +filter_by_time(tasks List~Task~) List~Task~
+        +resolve_conflicts(scheduled List~ScheduledTask~) List~ScheduledTask~
+        +build_plan() List~ScheduledTask~
         +explain_plan() str
     }
 
     Owner "1" --> "*" Pet : owns
     Pet "1" --> "*" Task : has
+    Task --> Priority : rated by
+    ScheduledTask --> Task : wraps
     Scheduler --> Owner : plans for
-    Scheduler --> Pet : schedules
-    Scheduler ..> Task : orders
+    Scheduler ..> ScheduledTask : produces
