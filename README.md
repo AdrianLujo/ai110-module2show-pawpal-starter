@@ -58,19 +58,40 @@ Daily plan for Jordan (90 min available):
 
 ## 🧪 Testing PawPal+
 
+Run the full suite from the project root:
+
 ```bash
-# Run the full test suite:
-pytest
-
-# Run with coverage:
-pytest --cov
+python -m pytest
 ```
 
-Sample test output:
+All 28 tests live in `tests/test_pawpal.py` and pass:
 
 ```
-# Paste your pytest output here
+(.venv) ➜  ai110-module2show-pawpal-starter git:(main) ✗ python -m pytest
+========================= test session starts ==========================
+platform darwin -- Python 3.11.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/adrianlujo/aiproj3/ai110-module2show-pawpal-starter
+plugins: anyio-4.14.1
+collected 28 items
+
+tests/test_pawpal.py ............................                [100%]
+
+========================== 28 passed in 0.04s ==========================
 ```
+
+### What the tests cover
+
+- **Time-budget enforcement** — the scheduler keeps tasks only while the owner's `minutes_available` lasts and drops the rest, including a zero budget, a single task larger than the whole budget, and the greedy fallback that skips an unaffordable task to keep a smaller one.
+- **Priority ordering** — `sort_by_priority()` returns pending tasks strictly HIGH → MEDIUM → LOW, and `build_plan()` protects a HIGH task by dropping a LOW one when time is tight.
+- **Sorting correctness** — `sort_by_time()` returns tasks in true chronological order (untimed first, and `"9:00"` correctly before `"10:00"`).
+- **Recurrence logic** — completing a `daily` task spawns a follow-up due +1 day, `weekly` → +7 days, a one-off spawns nothing, and re-completing an already-done task does **not** create a duplicate.
+- **Conflict detection** — `detect_conflicts()` flags two tasks sharing a start time (including across different pets and equivalent formats like `"09:00"` vs `"9:00"`), while ignoring done/untimed tasks and never crashing.
+- **Overlap resolution** — `resolve_conflicts()` pushes back duration overlaps so no two slots in a built plan ever double-book.
+- **Edge cases & fixed bugs** — empty owners/pets, case-insensitive frequency (`"Daily"`), a late-night task that no longer wraps past midnight, and future-dated follow-ups correctly held out of today's plan. Each of these is a regression test guarding a bug that was found and fixed.
+
+### Confidence Level: ★★★★☆ (4 / 5)
+
+All 28 tests pass and cover every core scheduling behavior — budgeting, priority, sorting, recurrence, and conflict handling — including six edge-case bugs that were caught and fixed with regression tests. Confidence is a strong 4 rather than 5 because coverage is at the unit level only: there are no integration tests for the Streamlit UI (`app.py`), and a couple of deliberate design simplifications remain (e.g. a task spilling past midnight is clamped to end-of-day rather than scheduled across days).
 
 ## 📐 Smarter Scheduling
 
@@ -85,7 +106,7 @@ PawPal+ goes beyond a flat to-do list. All logic lives in `pawpal_system.py`.
 
 ### Sorting behavior
 
-- **`Scheduler.sort_by_time()`** returns all of the owner's tasks sorted earliest-first by their `"HH:MM"` start time. Because that format is zero-padded and fixed-width, sorting the strings alphabetically already matches chronological order — no time parsing needed.
+- **`Scheduler.sort_by_time()`** returns all of the owner's tasks sorted earliest-first by their `"HH:MM"` start time. Each time is parsed into a real `time` value before sorting, so chronological order holds even for non-zero-padded input like `"9:00"` (which a plain string sort would wrongly place after `"10:00"`). Tasks with no time set sort first.
 - **`Scheduler.sort_by_priority()`** returns the owner's *pending* tasks sorted highest-priority first, using the `Priority` enum (`HIGH > MEDIUM > LOW`).
 
 ### Filtering behavior
@@ -95,8 +116,8 @@ PawPal+ goes beyond a flat to-do list. All logic lives in `pawpal_system.py`.
 
 ### Conflict detection logic
 
-- **`Scheduler.detect_conflicts()`** groups pending tasks by their `"HH:MM"` start time and returns a list of warning strings for any time slot holding two or more tasks. It catches clashes across *different* pets as well as within one pet, skips done/timeless tasks, and returns an empty list when nothing collides — so it warns rather than crashing the program.
-- Note: the detector only flags exact time matches; the plan itself resolves duration overlaps separately via `Scheduler.resolve_conflicts()`, which pushes overlapping slots back so nothing double-books.
+- **`Scheduler.detect_conflicts()`** normalizes each pending task's start time to a canonical `"HH:MM"` form (so `"9:00"` and `"09:00"` are treated as the same slot), groups tasks by that slot, and returns a list of warning strings for any slot holding two or more tasks. It catches clashes across *different* pets as well as within one pet, skips done/timeless tasks, and returns an empty list when nothing collides — so it warns rather than crashing the program.
+- Note: the detector only flags tasks sharing the *same start time*; the plan itself resolves duration overlaps separately via `Scheduler.resolve_conflicts()`, which pushes overlapping slots back so nothing double-books.
 
 ### Recurring task logic
 

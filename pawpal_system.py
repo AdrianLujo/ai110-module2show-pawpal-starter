@@ -32,15 +32,25 @@ class Priority(IntEnum):
 
 
 def _add_minutes(start: time, minutes: int) -> time:
-    """Return the time `minutes` after `start` (same day)."""
-    return (datetime.combine(date.min, start) + timedelta(minutes=minutes)).time()
+    """Return the time `minutes` after `start`, clamped to end-of-day.
+
+    This is a single-day planner, so a task that would spill past midnight is
+    pinned at the last instant of the day rather than wrapping around to the
+    small hours — which would otherwise make an end time fall *before* its
+    start and send resolve_conflicts()'s cursor backwards.
+    """
+    combined = datetime.combine(date.min, start) + timedelta(minutes=minutes)
+    if combined.date() > date.min:
+        return time.max
+    return combined.time()
 
 
 def _parse_time(value: str, fallback: time) -> time:
     """Parse an "HH:MM" string into a time; use `fallback` when unset/invalid.
 
     Never raises — a blank or malformed value falls back rather than crashing
-    the whole plan over one bad task.
+    the whole plan over one bad task. Accepts non-zero-padded input like
+    "9:00" as well as "09:00".
     """
     if not value:
         return fallback
@@ -48,6 +58,19 @@ def _parse_time(value: str, fallback: time) -> time:
         return datetime.strptime(value, "%H:%M").time()
     except ValueError:
         return fallback
+
+
+def _canonical_time(value: str) -> str:
+    """Normalize an "HH:MM" string so equivalent forms compare equal.
+
+    "9:00" and "09:00" are the same clock time; both become "09:00". A blank
+    or malformed value is returned unchanged so it neither merges with real
+    slots nor crashes.
+    """
+    try:
+        return datetime.strptime(value, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        return value
 
 
 @dataclass
@@ -74,9 +97,13 @@ class Task:
         """Mark this task not complete."""
         self.done = False
 
+    def _frequency_key(self) -> str:
+        """Normalize the frequency for lookups: trimmed and lower-cased."""
+        return self.frequency.strip().lower()
+
     def is_recurring(self) -> bool:
         """Return True if this task repeats on a known frequency."""
-        return self.frequency in _FREQUENCY_DELTAS
+        return self._frequency_key() in _FREQUENCY_DELTAS
 
     def next_occurrence(self, from_date: date | None = None) -> "Task":
         """Return a fresh, not-done copy of this task for its next occurrence.
@@ -91,7 +118,7 @@ class Task:
                 f"{self.title!r} has no recurring frequency to advance"
             )
         base = from_date or date.today()
-        next_due = base + _FREQUENCY_DELTAS[self.frequency]
+        next_due = base + _FREQUENCY_DELTAS[self._frequency_key()]
         # replace() copies every other field (title, duration, priority, ...)
         # so only the due date and completion status change.
         return replace(self, due_date=next_due, done=False)
@@ -139,7 +166,12 @@ class Pet:
         follow-up task, or None for a one-off task. This logic lives on Pet
         (not Task) because only the pet owns the task list the new instance
         must be added to.
+
+        Re-completing a task that is already done is a no-op: it returns None
+        rather than spawning a duplicate follow-up.
         """
+        if task.done:
+            return None
         task.mark_complete()
         if not task.is_recurring():
             return None
@@ -193,12 +225,15 @@ class Scheduler:
     def sort_by_time(self) -> list[Task]:
         """Return the owner's tasks sorted by start time, earliest first.
 
-        Each task's `time` is an "HH:MM" (24-hour) string. Because that format
-        is zero-padded and fixed-width, sorting the strings lexicographically
-        matches chronological order, so the lambda key can hand `sorted()` the
-        raw string with no parsing needed. Tasks with no time ("") sort first.
+        Each task's `time` is an "HH:MM" (24-hour) string, which we parse to a
+        real time so that chronological order holds even for non-zero-padded
+        input like "9:00" (a raw string sort would put it after "10:00"). The
+        key's leading flag keeps tasks with no time ("") sorting first.
         """
-        return sorted(self.owner.all_tasks(), key=lambda t: t.time)
+        return sorted(
+            self.owner.all_tasks(),
+            key=lambda t: (t.time != "", _parse_time(t.time, time.min)),
+        )
 
     def filter_tasks(
         self, done: bool | None = None, pet_name: str | None = None
@@ -223,8 +258,9 @@ class Scheduler:
     def detect_conflicts(self) -> list[str]:
         """Return warning messages for tasks that share the same start time.
 
-        Lightweight by design: it only groups pending tasks by their "HH:MM"
-        `time` string — no slot math, no mutation of the plan. Tasks with no
+        Lightweight by design: it only groups pending tasks by their start
+        time — no slot math, no mutation of the plan. Times are normalized
+        first, so "9:00" and "09:00" collide as the same slot. Tasks with no
         time set ("") or already done are skipped, and clashes across
         different pets are caught just like clashes within one pet. Returns an
         empty list when nothing collides, so callers can print the result
@@ -235,7 +271,8 @@ class Scheduler:
             for task in pet.tasks:
                 if task.done or not task.time:
                     continue
-                by_time.setdefault(task.time, []).append((pet.name, task))
+                slot = _canonical_time(task.time)
+                by_time.setdefault(slot, []).append((pet.name, task))
 
         warnings: list[str] = []
         for slot in sorted(by_time):
@@ -292,8 +329,16 @@ class Scheduler:
         Priority decides which tasks make the time budget; each survivor is
         then placed at its own `time` and overlaps are pushed back, so the
         final plan is ordered chronologically by start time.
+
+        Tasks explicitly due after today (e.g. a recurring task's next
+        occurrence) are held out — this plan is for today. Tasks with no due
+        date are always eligible.
         """
-        ordered = self.sort_by_priority()
+        today = date.today()
+        ordered = [
+            t for t in self.sort_by_priority()
+            if t.due_date is None or t.due_date <= today
+        ]
         affordable = self.filter_by_time(ordered)
         scheduled = self._assign_slots(affordable)
         return self.resolve_conflicts(scheduled)
