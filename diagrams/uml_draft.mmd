@@ -1,0 +1,50 @@
+classDiagram
+    %% PawPal+ system design (draft)
+    %% Refine this so it matches your final implementation.
+
+    class Owner {
+        +str name
+        +int minutes_available
+        +List~str~ preferences
+        +List~Pet~ pets
+        +add_pet(pet Pet) void
+        +set_availability(minutes int) void
+        +add_preference(pref str) void
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +str breed
+        +int age
+        +List~Task~ tasks
+        +add_task(task Task) void
+        +remove_task(task Task) void
+    }
+
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +bool recurring
+        +str notes
+        +priority_score() int
+        +fits_in(minutes int) bool
+    }
+
+    class Scheduler {
+        +Owner owner
+        +Pet pet
+        +List~Task~ tasks
+        +sort_by_priority() List~Task~
+        +filter_by_time(available int) List~Task~
+        +resolve_conflicts(tasks List~Task~) List~Task~
+        +build_plan() List~Task~
+        +explain_plan() str
+    }
+
+    Owner "1" --> "*" Pet : owns
+    Pet "1" --> "*" Task : has
+    Scheduler --> Owner : plans for
+    Scheduler --> Pet : schedules
+    Scheduler ..> Task : orders
